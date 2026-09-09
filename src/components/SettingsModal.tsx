@@ -1,6 +1,12 @@
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { toLocalISODate } from "../services/localDate";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  playSoundEffect,
+  setSoundEffectsEnabled,
+  soundEffectsEnabled,
+  subscribeSoundEffects,
+} from "../services/soundEffects";
 import {
   isNotificationSupported,
   requestNotificationPermission,
@@ -35,6 +41,7 @@ export function SettingsModal({
   const dialogRef = useDialogFocus(open, onClose);
   const [feedback, setFeedback] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const soundsEnabled = useSyncExternalStore(subscribeSoundEffects, soundEffectsEnabled);
 
   useEffect(() => {
     if (!feedback) return;
@@ -153,6 +160,42 @@ export function SettingsModal({
           className="overflow-y-auto px-5 pb-6"
           style={{ maxHeight: "calc(90vh - 60px)" }}
         >
+          <section className="mb-5 rounded-row border border-idayal-border dark:border-idayal-border-dark bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev px-4 py-3 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="font-medium text-idayal-text dark:text-zinc-100">Effets sonores</p>
+                <p id="sounds-description" className="mt-0.5 text-xs text-idayal-text-secondary dark:text-zinc-400">
+                  Une touche discrète pour ajouter, terminer ou reporter.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-label="Effets sonores"
+                aria-describedby="sounds-description"
+                aria-checked={soundsEnabled}
+                onClick={() => {
+                  setSoundEffectsEnabled(!soundsEnabled);
+                  if (!soundsEnabled) playSoundEffect("complete");
+                }}
+                className="flex h-11 w-12 shrink-0 items-center"
+              >
+                <span className={`relative block h-7 w-12 rounded-full transition-colors ${soundsEnabled ? "bg-idayal-blue" : "bg-zinc-300 dark:bg-zinc-700"}`}>
+                  <span className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${soundsEnabled ? "translate-x-5" : ""}`} />
+                </span>
+              </button>
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span className="text-xs text-idayal-text-secondary dark:text-zinc-400">
+                {soundsEnabled ? "Activés sur cet appareil" : "Désactivés sur cet appareil"}
+              </span>
+              <button type="button" disabled={!soundsEnabled} onClick={() => playSoundEffect("complete")}
+                className="min-h-11 px-2 text-sm font-medium text-idayal-blue disabled:opacity-40">
+                Écouter
+              </button>
+            </div>
+          </section>
+
           <SyncSection sync={sync} />
 
           {/* Notifications */}

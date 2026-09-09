@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Note, Task } from "../types/task";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { toLocalISODate } from "../services/localDate";
@@ -36,6 +36,10 @@ export function SearchSheet({
 }: Props) {
   const [query, setQuery] = useState("");
   const [noteId, setNoteId] = useState<string | null>(null);
+  const [viewport, setViewport] = useState(() => {
+    const visible = window.visualViewport;
+    return visible ? { top: visible.offsetTop, height: visible.height } : null;
+  });
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useDialogFocus(true, onClose);
   const deferredQuery = useDeferredValue(query);
@@ -44,13 +48,26 @@ export function SearchSheet({
     [tasks, notes, deferredQuery],
   );
   const note = notes.find((item) => item.id === noteId);
+  useLayoutEffect(() => {
+    const visible = window.visualViewport;
+    if (!visible) return;
+    const update = () => setViewport({ top: visible.offsetTop, height: visible.height });
+    update();
+    visible.addEventListener("resize", update);
+    visible.addEventListener("scroll", update);
+    return () => {
+      visible.removeEventListener("resize", update);
+      visible.removeEventListener("scroll", update);
+    };
+  }, []);
   useEffect(() => {
-    if (!noteId) inputRef.current?.focus();
+    if (!noteId) inputRef.current?.focus({ preventScroll: true });
   }, [noteId]);
   const total = results.tasks.length + results.notes.length;
   return (
     <div
-      className="utility-dialog"
+      className="utility-dialog search-dialog"
+      style={viewport ? { top: viewport.top, height: viewport.height } : undefined}
       role="dialog"
       aria-modal="true"
       aria-label="Rechercher"
@@ -99,7 +116,7 @@ export function SearchSheet({
                   className="icon-button"
                   onClick={() => {
                     setQuery("");
-                    inputRef.current?.focus();
+                    inputRef.current?.focus({ preventScroll: true });
                   }}
                   aria-label="Effacer la recherche"
                 >

@@ -18,6 +18,7 @@ import { parseRecurringTask } from "./services/recurrence";
 import { parseFrenchDate } from "./services/frenchDateParser";
 import { scheduleNotifications } from "./services/notificationService";
 import { orderDeck } from "./services/stack";
+import { playSoundEffect, prepareSoundEffects } from "./services/soundEffects";
 import { useCloudSync } from "./hooks/useCloudSync";
 import { useTaskStore } from "./stores/useTaskStore";
 import { toLocalISODate, toLocalISODateTime } from "./services/localDate";
@@ -81,6 +82,15 @@ export default function App() {
     step: CompleteStep;
   } | null>(null);
   const addInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    window.addEventListener("pointerdown", prepareSoundEffects, { passive: true });
+    window.addEventListener("keydown", prepareSoundEffects);
+    return () => {
+      window.removeEventListener("pointerdown", prepareSoundEffects);
+      window.removeEventListener("keydown", prepareSoundEffects);
+    };
+  }, []);
 
   // Application du thème + écoute des changements système.
   useEffect(() => {
@@ -270,6 +280,7 @@ export default function App() {
   ) => {
     const id = store.addTask(title, scheduledDate, recurrence ?? undefined);
     if (!id) return;
+    playSoundEffect("add");
     /*
      * Ce qu'on vient d'écrire s'affiche, sauf si la carte en cours est étoilée.
      *
@@ -295,6 +306,7 @@ export default function App() {
     if (!task) return;
     if (task.completedDate) {
       store.toggleComplete(id); // décocher : rien à confirmer
+      playSoundEffect("tap");
       return;
     }
     if ((task.subtasks ?? []).some((s) => !s.done)) {
@@ -306,6 +318,7 @@ export default function App() {
       return;
     }
     store.completeTask(id, false);
+    playSoundEffect("complete");
   };
 
   const pendingTask = pendingComplete
@@ -323,6 +336,7 @@ export default function App() {
       return;
     }
     store.completeTask(pendingComplete.id, keepNote);
+    playSoundEffect("complete");
     setPendingComplete(null);
   };
 
@@ -399,6 +413,7 @@ export default function App() {
   const handleDueSnooze = () => {
     if (!dueTask) return;
     setDismissedUntil((p) => ({ ...p, [dueTask.id]: Date.now() + SNOOZE_MS }));
+    playSoundEffect("postpone");
   };
 
   const previewTask = store.tasks.find((task) => task.id === previewTaskId);
@@ -447,12 +462,18 @@ export default function App() {
             laterTasks={store.laterTasks}
             pinnedTaskId={pinnedTaskId}
             onComplete={requestComplete}
-            onPostpone={store.postponeToTomorrow}
+            onPostpone={(id) => {
+              store.postponeToTomorrow(id);
+              playSoundEffect("postpone");
+            }}
             onPromoteToTop={handlePromoteToTop}
             onInspectTask={inspectTask}
             onEditTitle={store.updateTaskTitle}
             onRecurrenceChange={store.setTaskRecurrence}
-            onReschedule={store.rescheduleTask}
+            onReschedule={(id, date) => {
+              store.rescheduleTask(id, date);
+              playSoundEffect("postpone");
+            }}
             onTogglePin={handleTogglePin}
             deckFront={deckFront}
             deckBack={deckBack}

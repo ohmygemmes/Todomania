@@ -2317,7 +2317,7 @@ html.dark {
   color: var(--ink);
   height: 44px;
   outline: none;
-  font-size: 15px;
+  font-size: 16px;
 }
 .search-field input:focus-visible {
   outline: none;
@@ -2330,6 +2330,48 @@ html.dark {
 .search-results {
   min-height: 160px;
   overflow: auto;
+}
+/* Search stays at the top of the visible viewport, including above iOS keyboards. */
+.utility-dialog.search-dialog {
+  align-items: flex-start;
+  bottom: auto;
+  height: 100dvh;
+  padding: calc(env(safe-area-inset-top) + 12px) 12px 12px;
+}
+.search-dialog .search-sheet {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 24px;
+  padding: 16px 18px;
+  animation: none;
+}
+.search-sheet > .sheet-handle {
+  display: none;
+}
+.search-sheet .search-summary {
+  flex-shrink: 0;
+}
+.search-sheet .search-results {
+  flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.search-sheet .search-note-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+@media (min-width: 800px) {
+  .utility-dialog.search-dialog {
+    padding-top: 32px;
+  }
+  .search-dialog .search-sheet {
+    max-height: 680px;
+  }
 }
 .result-group-title {
   display: flex;

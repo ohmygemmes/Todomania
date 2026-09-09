@@ -4,6 +4,15 @@ export interface SubTask {
   done: boolean;
 }
 
+/** Calendrier local fixe : reporter une occurrence ne déplace pas la série. */
+export interface RecurrenceRule {
+  frequency: "daily" | "weekdays" | "weekly" | "monthly";
+  /** Première date choisie, avec son heure éventuelle et son jour du mois. */
+  anchorDate: string;
+  /** Attribué à la création ; commun à toutes les occurrences. */
+  seriesId?: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -30,6 +39,10 @@ export interface Task {
    * l'appareil — sa place est ici, où elle voyage avec le reste.
    */
   isPinned?: boolean;
+  /** Absent pour les tâches ordinaires et les sauvegardes antérieures. */
+  recurrence?: RecurrenceRule;
+  /** Successeur déjà créé. Empêche de recréer une occurrence supprimée. */
+  recurrenceNextId?: string;
 }
 
 /**
@@ -44,12 +57,12 @@ export interface Note {
   fromTaskTitle?: string;
 }
 
-export type TabKey = 'today' | 'later' | 'cards' | 'notes';
+export type TabKey = "today" | "later" | "cards" | "notes";
 
 export interface Settings {
   notificationsEnabled: boolean;
   morningSummaryTime: string; // "HH:mm"
-  themeMode: 'system' | 'light' | 'dark';
+  themeMode: "system" | "light" | "dark";
   /** Tâche à afficher en premier dans l'onglet Cartes. */
   pinnedTaskId: string | null;
 }

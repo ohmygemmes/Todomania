@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Note, Settings, SubTask, Task } from '../types/task';
-import { toLocalISODate, toLocalISODateTime } from '../services/localDate';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  Note,
+  RecurrenceRule,
+  Settings,
+  SubTask,
+  Task,
+} from "../types/task";
+import { toLocalISODate, toLocalISODateTime } from "../services/localDate";
+import {
+  isRecurrenceRule,
+  nextRecurrenceDate,
+  nextRecurringTask,
+  reconcileRecurringTasks,
+} from "../services/recurrence";
 
-const TASKS_KEY = 'idayal:tasks:v1';
-const SETTINGS_KEY = 'idayal:settings:v1';
-const NOTES_KEY = 'idayal:notes:v1';
+const TASKS_KEY = "idayal:tasks:v1";
+const SETTINGS_KEY = "idayal:settings:v1";
+const NOTES_KEY = "idayal:notes:v1";
 
 const DEFAULT_SETTINGS: Settings = {
   notificationsEnabled: false,
-  morningSummaryTime: '08:00',
-  themeMode: 'system',
+  morningSummaryTime: "08:00",
+  themeMode: "system",
   pinnedTaskId: null,
 };
 
@@ -18,14 +30,14 @@ function todayISO(): string {
 }
 
 function isPastDate(iso: string): boolean {
-  const date = iso.length === 10 ? new Date(iso + 'T00:00:00') : new Date(iso);
+  const date = iso.length === 10 ? new Date(iso + "T00:00:00") : new Date(iso);
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   return date.getTime() < start.getTime();
 }
 
 function isTodayOrPast(iso: string): boolean {
-  const date = iso.length === 10 ? new Date(iso + 'T00:00:00') : new Date(iso);
+  const date = iso.length === 10 ? new Date(iso + "T00:00:00") : new Date(iso);
   const end = new Date();
   end.setHours(23, 59, 59, 999);
   return date.getTime() <= end.getTime();
@@ -37,7 +49,7 @@ function loadTasks(): Task[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed as Task[];
+    return reconcileRecurringTasks(parsed as Task[]);
   } catch {
     return [];
   }
@@ -77,15 +89,21 @@ function saveSettings(s: Settings) {
 }
 
 function newId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto)
+    return crypto.randomUUID();
   return `id_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /** Reporte les tâches non complétées des jours passés vers aujourd'hui. */
-function carryOverPastTasks(tasks: Task[]): { tasks: Task[]; changed: boolean } {
+function carryOverPastTasks(tasks: Task[]): {
+  tasks: Task[];
+  changed: boolean;
+} {
   const today = todayISO();
   let changed = false;
-  const next = tasks.map((t) => {
+  const reconciled = reconcileRecurringTasks(tasks);
+  if (reconciled !== tasks) changed = true;
+  const next = reconciled.map((t) => {
     if (t.completedDate) return t;
     const ref = t.scheduledDate ?? t.createdDate;
     if (isPastDate(ref)) {
@@ -93,7 +111,9 @@ function carryOverPastTasks(tasks: Task[]): { tasks: Task[]; changed: boolean } 
       return {
         ...t,
         isCarriedOver: true,
-        originalDate: t.originalDate || (t.scheduledDate ? t.scheduledDate.slice(0, 10) : t.createdDate),
+        originalDate:
+          t.originalDate ||
+          (t.scheduledDate ? t.scheduledDate.slice(0, 10) : t.createdDate),
         scheduledDate: today,
       };
     }
@@ -116,7 +136,12 @@ export interface TaskStore {
   todayTasks: Task[];
   laterTasks: Task[];
   /** Renvoie l'identifiant créé, ou `null` si le titre était vide. */
-  addTask: (title: string, scheduledDate?: string | null) => string | null;
+  addTask: (
+    title: string,
+    scheduledDate?: string | null,
+    recurrence?: RecurrenceRule | null,
+  ) => string | null;
+  setTaskRecurrence: (id: string, recurrence: RecurrenceRule | null) => void;
   toggleComplete: (id: string) => void;
   /** Termine une tâche en décidant du sort de sa note. */
   completeTask: (id: string, keepNote: boolean) => void;
@@ -161,24 +186,36 @@ export function useTaskStore(): TaskStore {
    * tâche entre-temps, annuler ne l'efface pas.
    */
   const restoreRef = useRef<((cur: Task[]) => Task[]) | null>(null);
+  const restoreNotesRef = useRef<((cur: Note[]) => Note[]) | null>(null);
   const undoSeq = useRef(0);
 
-  const registerUndo = useCallback((label: string, restore: (cur: Task[]) => Task[]) => {
-    restoreRef.current = restore;
-    undoSeq.current += 1;
-    setUndoState({ id: undoSeq.current, label });
-  }, []);
+  const registerUndo = useCallback(
+    (
+      label: string,
+      restore: (cur: Task[]) => Task[],
+      restoreNotes?: (cur: Note[]) => Note[],
+    ) => {
+      restoreRef.current = restore;
+      restoreNotesRef.current = restoreNotes ?? null;
+      undoSeq.current += 1;
+      setUndoState({ id: undoSeq.current, label });
+    },
+    [],
+  );
 
   const undo = useCallback(() => {
     const restore = restoreRef.current;
     if (!restore) return;
     setTasks(restore);
+    if (restoreNotesRef.current) setNotes(restoreNotesRef.current);
+    restoreNotesRef.current = null;
     restoreRef.current = null;
     setUndoState(null);
   }, []);
 
   const clearUndo = useCallback(() => {
     restoreRef.current = null;
+    restoreNotesRef.current = null;
     setUndoState(null);
   }, []);
 
@@ -195,7 +232,7 @@ export function useTaskStore(): TaskStore {
     setTasks((prev) =>
       prev.some((t) => t.id === ancien)
         ? prev.map((t) => (t.id === ancien ? { ...t, isPinned: true } : t))
-        : prev
+        : prev,
     );
     setSettings((prev) => ({ ...prev, pinnedTaskId: null }));
   }, [settings.pinnedTaskId]);
@@ -210,13 +247,13 @@ export function useTaskStore(): TaskStore {
     };
     run();
     const onVis = () => {
-      if (document.visibilityState === 'visible') run();
+      if (document.visibilityState === "visible") run();
     };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('focus', run);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", run);
     return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('focus', run);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", run);
     };
   }, []);
 
@@ -231,41 +268,169 @@ export function useTaskStore(): TaskStore {
     saveSettings(settings);
   }, [settings]);
 
-  const addTask = useCallback((title: string, scheduledDate: string | null = null) => {
-    const trimmed = title.trim();
-    if (!trimmed) return null;
-    const today = todayISO();
-    const task: Task = {
-      id: newId(),
-      title: trimmed,
-      createdDate: today,
-      scheduledDate,
-      completedDate: null,
-      isCarriedOver: false,
-      originalDate: today,
-    };
-    setTasks((prev) => [task, ...prev]);
-    return task.id;
-  }, []);
+  const addTask = useCallback(
+    (
+      title: string,
+      scheduledDate: string | null = null,
+      recurrence?: RecurrenceRule | null,
+    ) => {
+      const trimmed = title.trim();
+      if (!trimmed) return null;
+      const today = todayISO();
+      const id = newId();
+      const rule = isRecurrenceRule(recurrence)
+        ? { ...recurrence, seriesId: id }
+        : undefined;
+      const task: Task = {
+        id,
+        title: trimmed,
+        createdDate: today,
+        scheduledDate:
+          scheduledDate ?? (rule ? nextRecurrenceDate(rule) : null),
+        recurrence: rule,
+        completedDate: null,
+        isCarriedOver: false,
+        originalDate: rule
+          ? (scheduledDate ?? rule.anchorDate).slice(0, 10)
+          : today,
+      };
+      setTasks((prev) => [task, ...prev]);
+      return task.id;
+    },
+    [],
+  );
+
+  /** One action creates one successor and one optional note, outside replayable updaters. */
+  const completeTask = useCallback(
+    (id: string, keepNote: boolean) => {
+      const target = tasks.find((t) => t.id === id);
+      if (!target || target.completedDate) return;
+      const now = new Date();
+      const successor = nextRecurringTask(target, now, tasks);
+      const seriesId = target.recurrence?.seriesId ?? target.id;
+      const existingSuccessor =
+        target.recurrence &&
+        tasks.find(
+          (t) =>
+            t.id !== id &&
+            !t.completedDate &&
+            t.recurrence?.seriesId === seriesId,
+        );
+      const next = existingSuccessor ?? successor;
+      const note = (target.note ?? "").trim();
+      const kept: Note | null =
+        keepNote && note
+          ? {
+              id: newId(),
+              text: note,
+              createdAt: now.toISOString(),
+              fromTaskTitle: target.title,
+            }
+          : null;
+      if (kept) setNotes((cur) => [kept, ...cur]);
+      registerUndo(
+        "Tâche terminée",
+        (cur) =>
+          cur
+            .filter(
+              (t) => !successor || existingSuccessor || t.id !== successor.id,
+            )
+            .map((t) =>
+              t.id === id
+                ? {
+                    ...t,
+                    completedDate: null,
+                    note: target.note,
+                    recurrenceNextId: target.recurrenceNextId,
+                  }
+                : t,
+            ),
+        kept ? (cur) => cur.filter((n) => n.id !== kept.id) : undefined,
+      );
+      const completedDate = toLocalISODateTime(now);
+      setTasks((prev) => {
+        if (prev.find((t) => t.id === id)?.completedDate) return prev;
+        const updated = prev.map((t) =>
+          t.id === id
+            ? {
+                ...t,
+                completedDate,
+                note: keepNote ? t.note : "",
+                recurrenceNextId: next?.id,
+              }
+            : t,
+        );
+        return successor &&
+          !existingSuccessor &&
+          !updated.some((t) => t.id === successor.id)
+          ? [...updated, successor]
+          : updated;
+      });
+    },
+    [tasks, registerUndo],
+  );
 
   const toggleComplete = useCallback(
     (id: string) => {
+      const target = tasks.find((t) => t.id === id);
+      if (!target) return;
+      if (!target.completedDate) {
+        completeTask(id, false);
+        return;
+      }
+      const seriesId = target.recurrence?.seriesId ?? target.id;
+      setTasks((prev) =>
+        prev
+          .filter(
+            (t) =>
+              !(
+                target.recurrence &&
+                t.id !== id &&
+                !t.completedDate &&
+                (t.recurrence?.seriesId ?? t.id) === seriesId
+              ),
+          )
+          .map((t) =>
+            t.id === id
+              ? { ...t, completedDate: null, recurrenceNextId: undefined }
+              : t,
+          ),
+      );
+      clearUndo();
+    },
+    [tasks, completeTask, clearUndo],
+  );
+
+  const setTaskRecurrence = useCallback(
+    (id: string, recurrence: RecurrenceRule | null) => {
       setTasks((prev) => {
         const target = prev.find((t) => t.id === id);
-        if (!target) return prev;
-        const wasDone = !!target.completedDate;
-        // Décocher est déjà une annulation : on ne propose « Annuler » qu'en cochant.
-        if (!wasDone) {
-          registerUndo('Tâche terminée', (cur) =>
-            cur.map((t) => (t.id === id ? { ...t, completedDate: null } : t))
-          );
-        }
-        return prev.map((t) =>
-          t.id === id ? { ...t, completedDate: wasDone ? null : toLocalISODateTime(new Date()) } : t
-        );
+        if (!target || target.completedDate) return prev;
+        const seriesId = target.recurrence?.seriesId ?? id;
+        const rule = isRecurrenceRule(recurrence)
+          ? { ...recurrence, seriesId }
+          : undefined;
+        return prev.map((t) => {
+          if (t.id === id)
+            return {
+              ...t,
+              recurrence: rule,
+              recurrenceNextId: undefined,
+              scheduledDate: rule
+                ? (nextRecurrenceDate(rule) ?? t.scheduledDate)
+                : t.scheduledDate,
+              isCarriedOver: rule ? false : t.isCarriedOver,
+            };
+          // A removed rule stays removed even if an older Cockpit completion had no successor marker.
+          return !rule &&
+            t.completedDate &&
+            (t.recurrence?.seriesId ?? t.id) === seriesId
+            ? { ...t, recurrenceNextId: t.recurrenceNextId ?? id }
+            : t;
+        });
       });
     },
-    [registerUndo]
+    [],
   );
 
   const deleteTask = useCallback(
@@ -274,7 +439,7 @@ export function useTaskStore(): TaskStore {
         const index = prev.findIndex((t) => t.id === id);
         if (index === -1) return prev;
         const removed = prev[index];
-        registerUndo('Tâche supprimée', (cur) => {
+        registerUndo("Tâche supprimée", (cur) => {
           if (cur.some((t) => t.id === id)) return cur; // déjà restaurée
           const at = Math.min(index, cur.length);
           return [...cur.slice(0, at), removed, ...cur.slice(at)];
@@ -282,13 +447,15 @@ export function useTaskStore(): TaskStore {
         return prev.filter((t) => t.id !== id);
       });
     },
-    [registerUndo]
+    [registerUndo],
   );
 
   const updateTaskTitle = useCallback((id: string, title: string) => {
     const trimmed = title.trim();
     if (!trimmed) return;
-    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, title: trimmed } : t)));
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, title: trimmed } : t)),
+    );
   }, []);
 
   const setTaskNote = useCallback((id: string, note: string) => {
@@ -300,7 +467,9 @@ export function useTaskStore(): TaskStore {
     if (!trimmed) return;
     const sub: SubTask = { id: newId(), title: trimmed, done: false };
     setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, subtasks: [...(t.subtasks ?? []), sub] } : t))
+      prev.map((t) =>
+        t.id === taskId ? { ...t, subtasks: [...(t.subtasks ?? []), sub] } : t,
+      ),
     );
   }, []);
 
@@ -311,11 +480,11 @@ export function useTaskStore(): TaskStore {
           ? {
               ...t,
               subtasks: (t.subtasks ?? []).map((s) =>
-                s.id === subId ? { ...s, done: !s.done } : s
+                s.id === subId ? { ...s, done: !s.done } : s,
               ),
             }
-          : t
-      )
+          : t,
+      ),
     );
   }, []);
 
@@ -324,49 +493,10 @@ export function useTaskStore(): TaskStore {
       prev.map((t) =>
         t.id === taskId
           ? { ...t, subtasks: (t.subtasks ?? []).filter((s) => s.id !== subId) }
-          : t
-      )
+          : t,
+      ),
     );
   }, []);
-
-  /**
-   * Termine une tâche. Si elle porte une note, `keepNote` décide si celle-ci
-   * rejoint la page Notes ou disparaît avec la tâche.
-   */
-  const completeTask = useCallback(
-    (id: string, keepNote: boolean) => {
-      setTasks((prev) => {
-        const target = prev.find((t) => t.id === id);
-        if (!target || target.completedDate) return prev;
-
-        const note = (target.note ?? '').trim();
-        if (keepNote && note) {
-          const kept: Note = {
-            id: newId(),
-            text: note,
-            createdAt: new Date().toISOString(),
-            fromTaskTitle: target.title,
-          };
-          setNotes((cur) => [kept, ...cur]);
-        }
-
-        registerUndo('Tâche terminée', (cur) =>
-          cur.map((t) => (t.id === id ? { ...t, completedDate: null } : t))
-        );
-
-        return prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                completedDate: toLocalISODateTime(new Date()),
-                note: keepNote ? t.note : '',
-              }
-            : t
-        );
-      });
-    },
-    [registerUndo]
-  );
 
   const clearCompleted = useCallback(() => {
     let removed = 0;
@@ -375,22 +505,27 @@ export function useTaskStore(): TaskStore {
       removed = done.length;
       if (!removed) return prev;
       registerUndo(
-        `${removed} tâche${removed > 1 ? 's' : ''} effacée${removed > 1 ? 's' : ''}`,
+        `${removed} tâche${removed > 1 ? "s" : ""} effacée${removed > 1 ? "s" : ""}`,
         (cur) => {
           const missing = done.filter((d) => !cur.some((t) => t.id === d.id));
           return missing.length ? [...cur, ...missing] : cur;
-        }
+        },
       );
       return prev.filter((t) => !t.completedDate);
     });
     return removed;
   }, [registerUndo]);
 
-  const replaceAll = useCallback((nextTasks: Task[], nextNotes: Note[]) => {
-    setTasks(Array.isArray(nextTasks) ? nextTasks : []);
-    setNotes(Array.isArray(nextNotes) ? nextNotes : []);
-    clearUndo();
-  }, [clearUndo]);
+  const replaceAll = useCallback(
+    (nextTasks: Task[], nextNotes: Note[]) => {
+      setTasks(
+        Array.isArray(nextTasks) ? carryOverPastTasks(nextTasks).tasks : [],
+      );
+      setNotes(Array.isArray(nextNotes) ? nextNotes : []);
+      clearUndo();
+    },
+    [clearUndo],
+  );
 
   const addNote = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -420,19 +555,23 @@ export function useTaskStore(): TaskStore {
         if (!target) return prev;
         const prevScheduled = target.scheduledDate;
         const prevCarried = target.isCarriedOver;
-        registerUndo('Reportée à demain', (cur) =>
+        registerUndo("Reportée à demain", (cur) =>
           cur.map((t) =>
             t.id === id
-              ? { ...t, scheduledDate: prevScheduled, isCarriedOver: prevCarried }
-              : t
-          )
+              ? {
+                  ...t,
+                  scheduledDate: prevScheduled,
+                  isCarriedOver: prevCarried,
+                }
+              : t,
+          ),
         );
         return prev.map((t) =>
-          t.id === id ? { ...t, scheduledDate: iso, isCarriedOver: false } : t
+          t.id === id ? { ...t, scheduledDate: iso, isCarriedOver: false } : t,
         );
       });
     },
-    [registerUndo]
+    [registerUndo],
   );
 
   /**
@@ -452,25 +591,31 @@ export function useTaskStore(): TaskStore {
         if (!target) return prev;
         const prevScheduled = target.scheduledDate;
         const prevCarried = target.isCarriedOver;
-        registerUndo('Échéance modifiée', (cur) =>
+        registerUndo("Échéance modifiée", (cur) =>
           cur.map((t) =>
             t.id === id
-              ? { ...t, scheduledDate: prevScheduled, isCarriedOver: prevCarried }
-              : t
-          )
+              ? {
+                  ...t,
+                  scheduledDate: prevScheduled,
+                  isCarriedOver: prevCarried,
+                }
+              : t,
+          ),
         );
         return prev.map((t) =>
-          t.id === id ? { ...t, scheduledDate, isCarriedOver: false } : t
+          t.id === id ? { ...t, scheduledDate, isCarriedOver: false } : t,
         );
       });
     },
-    [registerUndo]
+    [registerUndo],
   );
 
   const bringToToday = useCallback((id: string) => {
     const today = todayISO();
     setTasks((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, scheduledDate: today, isCarriedOver: false } : t))
+      prev.map((t) =>
+        t.id === id ? { ...t, scheduledDate: today, isCarriedOver: false } : t,
+      ),
     );
   }, []);
 
@@ -483,7 +628,9 @@ export function useTaskStore(): TaskStore {
       const cible = id ? prev.find((t) => t.id === id) : null;
       const allume = !!cible && !cible.isPinned;
       return prev.map((t) =>
-        t.isPinned || t.id === id ? { ...t, isPinned: allume && t.id === id } : t
+        t.isPinned || t.id === id
+          ? { ...t, isPinned: allume && t.id === id }
+          : t,
       );
     });
   }, []);
@@ -513,25 +660,31 @@ export function useTaskStore(): TaskStore {
         const ok = new Date(t.completedDate).getTime() >= cutoff;
         if (!ok) removed += 1;
         return ok;
-      })
+      }),
     );
     return removed;
   }, []);
 
   const exportJSON = useCallback(() => {
-    return JSON.stringify({ tasks, settings, exportedAt: new Date().toISOString() }, null, 2);
-  }, [tasks, settings]);
+    return JSON.stringify(
+      { tasks, notes, settings, exportedAt: new Date().toISOString() },
+      null,
+      2,
+    );
+  }, [tasks, notes, settings]);
 
   const importJSON = useCallback((json: string) => {
     try {
       const parsed = JSON.parse(json);
       if (Array.isArray(parsed?.tasks)) {
-        setTasks(parsed.tasks as Task[]);
-        if (parsed.settings) setSettings({ ...DEFAULT_SETTINGS, ...parsed.settings });
+        setTasks(carryOverPastTasks(parsed.tasks as Task[]).tasks);
+        if (Array.isArray(parsed.notes)) setNotes(parsed.notes as Note[]);
+        if (parsed.settings)
+          setSettings({ ...DEFAULT_SETTINGS, ...parsed.settings });
         return true;
       }
       if (Array.isArray(parsed)) {
-        setTasks(parsed as Task[]);
+        setTasks(carryOverPastTasks(parsed as Task[]).tasks);
         return true;
       }
       return false;
@@ -567,6 +720,7 @@ export function useTaskStore(): TaskStore {
     todayTasks,
     laterTasks,
     addTask,
+    setTaskRecurrence,
     toggleComplete,
     completeTask,
     deleteTask,

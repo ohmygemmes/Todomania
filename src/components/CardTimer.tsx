@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from "react";
 import {
   create,
   displayedMs,
@@ -11,7 +11,8 @@ import {
   withMode,
   type RunningTimer,
   type TimerMode,
-} from '../services/timer';
+} from "../services/timer";
+import { Icon } from "./Icon";
 
 /** Durées proposées, en minutes. Même forme que les raccourcis d'heure de la saisie. */
 const PRESETS = [5, 25, 60];
@@ -39,9 +40,12 @@ export function CardTimer({ taskId }: { taskId: string }) {
     const t = loadTimer();
     return t && t.taskId === taskId ? t : null;
   });
-  const [mode, setMode] = useState<TimerMode>(() => timer?.mode ?? 'up');
-  const [duration, setDuration] = useState<number>(() => timer?.durationMs ?? 25 * MIN);
+  const [mode, setMode] = useState<TimerMode>(() => timer?.mode ?? "up");
+  const [duration, setDuration] = useState<number>(
+    () => timer?.durationMs ?? 25 * MIN,
+  );
   const [now, setNow] = useState(() => Date.now());
+  const [expanded, setExpanded] = useState(() => !!timer);
 
   const commit = useCallback((next: RunningTimer | null) => {
     setTimer(next);
@@ -53,8 +57,9 @@ export function CardTimer({ taskId }: { taskId: string }) {
     const t = loadTimer();
     const mine = t && t.taskId === taskId ? t : null;
     setTimer(mine);
-    setMode(mine?.mode ?? 'up');
+    setMode(mine?.mode ?? "up");
     setDuration(mine?.durationMs || 25 * MIN);
+    setExpanded(!!mine);
   }, [taskId]);
 
   /*
@@ -67,40 +72,63 @@ export function CardTimer({ taskId }: { taskId: string }) {
     if (!running) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     const wake = () => setNow(Date.now());
-    document.addEventListener('visibilitychange', wake);
+    document.addEventListener("visibilitychange", wake);
     return () => {
       window.clearInterval(id);
-      document.removeEventListener('visibilitychange', wake);
+      document.removeEventListener("visibilitychange", wake);
     };
   }, [running]);
 
   const active = timer ?? create(taskId, mode, duration);
   const finished = isFinished(active, now);
   const shown = formatDuration(displayedMs(active, now));
-  const idle = !timer || (!running && displayedMs(active, now) === (mode === 'down' ? duration : 0));
+  const idle =
+    !timer ||
+    (!running && displayedMs(active, now) === (mode === "down" ? duration : 0));
 
   const switchMode = (next: TimerMode) => {
     setMode(next);
-    if (next === 'down') setDuration(duration || 25 * MIN);
-    commit(timer ? withMode(timer, next, next === 'down' ? duration : 0) : null);
+    if (next === "down") setDuration(duration || 25 * MIN);
+    commit(
+      timer ? withMode(timer, next, next === "down" ? duration : 0) : null,
+    );
   };
 
   const pick = (minutes: number) => {
     const ms = minutes * MIN;
     setDuration(ms);
-    commit(timer ? withMode(timer, 'down', ms) : null);
+    commit(timer ? withMode(timer, "down", ms) : null);
   };
 
   const press = () => {
-    const t = timer ?? create(taskId, mode, mode === 'down' ? duration : 0);
+    const t = timer ?? create(taskId, mode, mode === "down" ? duration : 0);
     commit(toggle(t, Date.now()));
     setNow(Date.now());
   };
 
-  const showPresets = mode === 'down' && !running;
+  const showPresets = mode === "down" && !running;
+
+  if (!expanded && idle) {
+    return (
+      <div className="card-timer-collapsed" data-swipe-ignore>
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-expanded={false}
+          className="timer-disclosure"
+        >
+          <Icon name="clock" size={15} />
+          Chrono / minuteur
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative border-t border-idayal-border dark:border-idayal-border-dark pt-2.5 mt-1 flex flex-col gap-2">
+    <div
+      data-swipe-ignore
+      className="card-timer relative border-t border-idayal-border dark:border-idayal-border-dark pt-2.5 mt-1 flex flex-col gap-2"
+    >
       <div className="flex items-center gap-2">
         {/* Bascule à deux mots : le même bloc change de sens, rien ne s'ajoute. */}
         <div
@@ -108,7 +136,7 @@ export function CardTimer({ taskId }: { taskId: string }) {
           aria-label="Mode de minuterie"
           className="inline-flex gap-0.5 p-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800/70"
         >
-          {(['up', 'down'] as const).map((m) => (
+          {(["up", "down"] as const).map((m) => (
             <button
               key={m}
               type="button"
@@ -116,11 +144,11 @@ export function CardTimer({ taskId }: { taskId: string }) {
               aria-pressed={mode === m}
               className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition ${
                 mode === m
-                  ? 'bg-white dark:bg-zinc-700 text-idayal-text dark:text-zinc-100 shadow-sm'
-                  : 'text-idayal-text-muted dark:text-zinc-500'
+                  ? "bg-white dark:bg-zinc-700 text-idayal-text dark:text-zinc-100 shadow-sm"
+                  : "text-idayal-text-muted dark:text-zinc-500"
               }`}
             >
-              {m === 'up' ? 'Chrono' : 'Minuteur'}
+              {m === "up" ? "Chrono" : "Minuteur"}
             </button>
           ))}
         </div>
@@ -128,10 +156,10 @@ export function CardTimer({ taskId }: { taskId: string }) {
         <span
           className={`text-[16px] font-semibold tabular ${
             finished
-              ? 'text-idayal-green'
+              ? "text-idayal-blue"
               : idle
-                ? 'text-idayal-text-muted dark:text-zinc-600'
-                : 'text-idayal-text dark:text-zinc-100'
+                ? "text-idayal-text-muted dark:text-zinc-600"
+                : "text-idayal-text dark:text-zinc-100"
           }`}
         >
           {shown}
@@ -144,7 +172,7 @@ export function CardTimer({ taskId }: { taskId: string }) {
           />
         )}
         {finished && (
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-idayal-green">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-idayal-blue">
             terminé
           </span>
         )}
@@ -152,7 +180,7 @@ export function CardTimer({ taskId }: { taskId: string }) {
         <button
           type="button"
           onClick={press}
-          aria-label={running ? 'Mettre en pause' : 'Démarrer'}
+          aria-label={running ? "Mettre en pause" : "Démarrer"}
           className="ml-auto flex-shrink-0 w-[29px] h-[29px] rounded-full bg-idayal-blue text-white flex items-center justify-center active:scale-90 transition"
         >
           {running ? (
@@ -166,6 +194,17 @@ export function CardTimer({ taskId }: { taskId: string }) {
             </svg>
           )}
         </button>
+        {idle && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            aria-label="Replier le chrono"
+            title="Replier le chrono"
+            className="timer-collapse"
+          >
+            <Icon name="close" size={14} />
+          </button>
+        )}
       </div>
 
       {showPresets && (
@@ -178,8 +217,8 @@ export function CardTimer({ taskId }: { taskId: string }) {
               aria-pressed={duration === m * MIN}
               className={`px-2.5 py-1 rounded-full text-[12px] font-medium tabular border transition ${
                 duration === m * MIN
-                  ? 'bg-idayal-blue border-idayal-blue text-white font-semibold'
-                  : 'bg-zinc-100/80 dark:bg-zinc-800/60 border-transparent text-idayal-text-secondary dark:text-zinc-300'
+                  ? "bg-idayal-blue border-idayal-blue text-white font-semibold"
+                  : "bg-zinc-100/80 dark:bg-zinc-800/60 border-transparent text-idayal-text-secondary dark:text-zinc-300"
               }`}
             >
               {labelFor(m)}

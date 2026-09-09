@@ -1,10 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { parseFrenchDate } from '../services/frenchDateParser';
-import { atTimeOfDay, shiftBy } from '../services/dateShortcuts';
-import { pad2, toLocalISODate, toLocalISODateTime } from '../services/localDate';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { parseFrenchDate } from "../services/frenchDateParser";
+import { parseRecurringTask, recurrenceLabel } from "../services/recurrence";
+import type { RecurrenceRule } from "../types/task";
+import { atTimeOfDay, shiftBy } from "../services/dateShortcuts";
+import {
+  pad2,
+  toLocalISODate,
+  toLocalISODateTime,
+} from "../services/localDate";
 
 interface Props {
-  onAdd: (title: string, scheduledDate: string | null) => void;
+  onAdd: (
+    title: string,
+    scheduledDate: string | null,
+    recurrence?: RecurrenceRule | null,
+  ) => void;
   /** Ref pilotée par App pour le raccourci clavier de focus (ordinateur). */
   inputRef?: React.RefObject<HTMLInputElement>;
 }
@@ -18,9 +28,9 @@ const FIXED_TIMES: Array<[number, number]> = [
 
 /** Décalages, appliqués à l'heure déjà retenue — pas à l'instant présent. */
 const SHIFTS: Array<{ label: string; hours: number }> = [
-  { label: '+1h', hours: 1 },
-  { label: '6h', hours: 6 },
-  { label: '24', hours: 24 },
+  { label: "+1h", hours: 1 },
+  { label: "+6h", hours: 6 },
+  { label: "+24h", hours: 24 },
 ];
 
 /** Libellé du jour retenu : « Aujourd'hui », « Demain », sinon la date courte. */
@@ -32,12 +42,12 @@ function dayPillLabel(iso: string): string {
 
   let label: string;
   if (day === toLocalISODate(today)) label = "Aujourd'hui";
-  else if (day === toLocalISODate(tomorrow)) label = 'Demain';
+  else if (day === toLocalISODate(tomorrow)) label = "Demain";
   else
-    label = new Date(day + 'T00:00:00').toLocaleDateString('fr-FR', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
+    label = new Date(day + "T00:00:00").toLocaleDateString("fr-FR", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
     });
 
   const time = iso.length > 10 ? iso.slice(11, 16) : null;
@@ -45,7 +55,16 @@ function dayPillLabel(iso: string): string {
 }
 
 const CalendarIcon = () => (
-  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+  <svg
+    viewBox="0 0 24 24"
+    width="17"
+    height="17"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.3"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
     <rect x="3" y="5" width="18" height="16" rx="2" />
     <path d="M3 9h18M8 3v4M16 3v4" />
   </svg>
@@ -53,7 +72,17 @@ const CalendarIcon = () => (
 
 /** Petite flèche au-dessus des heures fixes, comme repère de « poser à ». */
 const JumpArrow = () => (
-  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="opacity-30">
+  <svg
+    viewBox="0 0 24 24"
+    width="11"
+    height="11"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="3"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className="opacity-30"
+  >
     <path d="M5 12h14M13 6l6 6-6 6" />
   </svg>
 );
@@ -76,23 +105,25 @@ function GroupButton({
       onClick={onClick}
       className={`flex flex-col items-center justify-center gap-0.5 px-3 h-11 rounded-full transition-all active:scale-95 ${
         active
-          ? 'bg-idayal-blue text-white shadow-[0_2px_10px_rgba(59,125,216,0.35)]'
-          : 'text-idayal-text dark:text-zinc-200'
+          ? "bg-idayal-blue text-white shadow-[0_2px_10px_rgba(59,125,216,0.35)]"
+          : "text-idayal-text dark:text-zinc-200"
       }`}
     >
       {arrow && <JumpArrow />}
-      <span className="tabular text-[15px] font-medium leading-none">{children}</span>
+      <span className="tabular text-[15px] font-medium leading-none">
+        {children}
+      </span>
     </button>
   );
 }
 
 const groupShell =
-  'inline-flex items-center gap-0.5 p-1 rounded-full bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev shadow-soft border border-idayal-border dark:border-idayal-border-dark';
+  "inline-flex items-center gap-0.5 p-1 rounded-full bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev shadow-soft border border-idayal-border dark:border-idayal-border-dark";
 
 export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
-  const [value, setValue] = useState('');
+  const [value, setValue] = useState("");
   /** Date retenue à la main : 'YYYY-MM-DD' ou 'YYYY-MM-DDTHH:mm'. */
-  const [manualDate, setManualDate] = useState('');
+  const [manualDate, setManualDate] = useState("");
   /**
    * Date lue dans le texte que l'utilisateur a explicitement écartée.
    *
@@ -146,7 +177,7 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
    * rien changer au tactile, qui fonctionne déjà.
    */
   const openNativePicker = (e: React.MouseEvent<HTMLInputElement>) => {
-    if (!window.matchMedia?.('(pointer: fine)').matches) return;
+    if (!window.matchMedia?.("(pointer: fine)").matches) return;
     try {
       e.currentTarget.showPicker();
     } catch {
@@ -168,26 +199,36 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
       const offset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
       setKeyboardOffset(offset);
     };
-    vv.addEventListener('resize', onResize);
-    vv.addEventListener('scroll', onResize);
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
     return () => {
-      vv.removeEventListener('resize', onResize);
-      vv.removeEventListener('scroll', onResize);
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onResize);
     };
   }, []);
 
+  const recurringPreview = useMemo(
+    () => parseRecurringTask(value.trim()),
+    [value],
+  );
   // Aperçu de la date détectée par le parser, en live.
   const detectedPreview = useMemo(() => {
     const text = value.trim();
     if (!text) return null;
+    if (recurringPreview.recurrence) return recurringPreview.scheduledDate;
     const { detectedDate, hasTime } = parseFrenchDate(text);
     if (!detectedDate) return null;
-    return hasTime ? toLocalISODateTime(detectedDate) : toLocalISODate(detectedDate);
-  }, [value]);
+    return hasTime
+      ? toLocalISODateTime(detectedDate)
+      : toLocalISODate(detectedDate);
+  }, [value, recurringPreview]);
 
   // Date effective : celle posée à la main prime sur celle lue dans le texte,
   // et une date lue mais écartée ne compte pas.
-  const detected = detectedPreview && detectedPreview !== ignoredDetected ? detectedPreview : null;
+  const detected =
+    detectedPreview && detectedPreview !== ignoredDetected
+      ? detectedPreview
+      : null;
   const effectiveScheduled = manualDate || detected;
   const chosenDay = effectiveScheduled ? effectiveScheduled.slice(0, 10) : null;
 
@@ -205,10 +246,10 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
      couvertes par des tests : elles portent des promesses précises (« 12h puis
      +1h donne 13h ») que rien ne rattraperait à la relecture. */
   const applyShift = (hours: number) =>
-    setManualDate(shiftBy(effectiveScheduled ?? '', hours, new Date()));
+    setManualDate(shiftBy(effectiveScheduled ?? "", hours, new Date()));
 
   const setTimeOfDay = (h: number, m: number) =>
-    setManualDate(atTimeOfDay(effectiveScheduled ?? '', h, m, new Date()));
+    setManualDate(atTimeOfDay(effectiveScheduled ?? "", h, m, new Date()));
 
   /**
    * Retire la date, d'où qu'elle vienne.
@@ -218,7 +259,7 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
    * date lue est donc mémorisé, le temps que le texte change.
    */
   const clearDate = () => {
-    setManualDate('');
+    setManualDate("");
     setIgnoredDetected(detectedPreview);
   };
 
@@ -236,27 +277,36 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
      * à la fois la date et le mot qui l'avait déclenchée. « reunion mardi »
      * reste « reunion mardi ».
      */
-    const dismissed = !manualDate && detectedPreview !== null && detected === null;
+    const dismissed =
+      !manualDate && detectedPreview !== null && detected === null;
     const { cleanTitle } = parseFrenchDate(text);
-    onAdd(dismissed ? text : cleanTitle || text, effectiveScheduled || null);
+    const rule = !dismissed ? recurringPreview.recurrence : null;
+    onAdd(
+      dismissed ? text : rule ? recurringPreview.title : cleanTitle || text,
+      effectiveScheduled || null,
+      rule
+        ? { ...rule, anchorDate: effectiveScheduled || rule.anchorDate }
+        : undefined,
+    );
 
-    setValue('');
-    setManualDate('');
+    setValue("");
+    setManualDate("");
     setIgnoredDetected(null);
     inputRef.current?.focus();
   };
 
-  const showShortcuts = focused || Boolean(manualDate);
+  const showShortcuts = focused;
 
   return (
     <div
-      className="fixed left-1/2 -translate-x-1/2 w-full max-w-app z-20 px-3"
+      className="quick-add fixed left-1/2 -translate-x-1/2 w-full max-w-app z-30 px-3"
+      data-keyboard={keyboardOffset > 0}
       style={{
         // 82px : la barre d'onglets culmine à 74px du bas, on garde 8px d'écart.
         bottom: keyboardOffset
           ? `calc(${keyboardOffset}px + 8px)`
-          : 'calc(env(safe-area-inset-bottom) + 82px)',
-        transition: 'bottom 0.12s ease-out',
+          : "calc(env(safe-area-inset-bottom) + 82px)",
+        transition: "bottom 0.12s ease-out",
       }}
     >
       {/* Raccourcis de date, pendant la saisie seulement. Voir `hold` plus haut
@@ -268,94 +318,76 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
           elles : trois pastilles isolées au-dessus d'une liste qui transparaissait.
           Un fond opaque les rassemble en un seul objet, entre la liste et le champ.
         */
-        <div className="mb-2 flex flex-col items-start gap-1.5 p-2.5 rounded-[20px] border border-idayal-border dark:border-idayal-border-dark bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev shadow-elev animate-fade-in">
+        <div className="date-shortcuts mb-2 flex flex-col items-start gap-1.5 p-2.5 rounded-[20px] border border-idayal-border dark:border-idayal-border-dark bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev shadow-elev animate-fade-in">
           {/*
             Le jour retenu, toujours actif : sans date explicite une tâche est
             déjà celle du jour, donc « Aujourd'hui » est l'état par défaut, pas
             une absence de choix. Le toucher ouvre le calendrier.
           */}
-          <div className="flex items-center gap-1.5">
-            {/*
-              Le champ de date est posé par-dessus la pastille, invisible.
-              Toucher la pastille, c'est donc toucher le champ : le calendrier
-              du système s'ouvre du premier coup.
-
-              Le champ était auparavant affiché dans une rangée à part. Un
-              `input[type=date]` s'y montrait vide, et il fallait le toucher à
-              son tour pour voir enfin le calendrier — deux gestes pour un.
-            */}
-            <div className="relative inline-flex items-center gap-2 h-11 pl-3.5 pr-4 rounded-full text-[15px] font-semibold bg-idayal-blue text-white shadow-[0_4px_14px_rgba(59,125,216,0.40)] active:scale-95 transition-transform">
+          <p className="shortcut-label">PRÉVOIR UN MOMENT</p>
+          <div className="date-day-row flex items-center gap-1.5">
+            <button
+              type="button"
+              aria-pressed={
+                !chosenDay || chosenDay === toLocalISODate(new Date())
+              }
+              className={`day-choice ${!chosenDay || chosenDay === toLocalISODate(new Date()) ? "selected" : ""}`}
+              onClick={act(() => {
+                const day = toLocalISODate(new Date());
+                setManualDate(chosenTime ? `${day}T${chosenTime}` : day);
+              })}
+            >
+              Aujourd’hui
+            </button>
+            <button
+              type="button"
+              aria-pressed={chosenDay === tomorrowISO}
+              className={`day-choice ${chosenDay === tomorrowISO ? "selected" : ""}`}
+              onClick={act(() =>
+                setManualDate(
+                  chosenTime ? `${tomorrowISO}T${chosenTime}` : tomorrowISO,
+                ),
+              )}
+            >
+              Demain
+            </button>
+            <div className="calendar-choice">
               <CalendarIcon />
-              {effectiveScheduled ? dayPillLabel(effectiveScheduled) : "Aujourd'hui"}
+              <span>Date</span>
               <input
                 type="date"
                 aria-label="Choisir le jour"
-                /* Jamais vide : le calendrier doit s'ouvrir sur le bon mois. */
                 value={chosenDay ?? toLocalISODate(new Date())}
-                /*
-                  Le calendrier affiché est celui du navigateur : ses commandes
-                  ne nous appartiennent pas et ne peuvent pas être retirées
-                  depuis la page. `required` est le seul levier — un champ qui
-                  ne peut pas être vide n'a pas de raison d'offrir « effacer »,
-                  et plusieurs navigateurs masquent le bouton en conséquence.
-                  Sans effet sur la saisie : le champ porte toujours une valeur,
-                  et il est hors du formulaire d'ajout.
-                */
                 required
                 onClick={openNativePicker}
                 onFocus={holdOpen}
                 onBlur={releaseSoon}
                 onChange={(e) => {
                   hold();
-                  /* Si le navigateur garde son bouton « effacer », qu'il fasse
-                     au moins la même chose que la croix : retirer le choix
-                     manuel — plutôt que de rester sans effet. */
                   if (!e.target.value) return clearDate();
                   setManualDate(
-                    chosenTime ? `${e.target.value}T${chosenTime}` : e.target.value
+                    chosenTime
+                      ? `${e.target.value}T${chosenTime}`
+                      : e.target.value,
                   );
                 }}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent border-0 p-0"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               />
             </div>
-            {/*
-              « Demain » à côté d'« Aujourd'hui ».
-              C'est la deuxième réponse la plus fréquente, et elle demandait
-              d'ouvrir le calendrier du système pour avancer d'un seul jour.
-              L'heure déjà retenue est conservée : choisir demain ne doit pas
-              effacer le 18:00 qu'on vient de poser.
-            */}
-            <button
-              type="button"
-              onClick={act(() =>
-                setManualDate(chosenTime ? `${tomorrowISO}T${chosenTime}` : tomorrowISO)
-              )}
-              aria-pressed={chosenDay === tomorrowISO}
-              className={`h-11 px-4 rounded-full text-[15px] font-semibold flex-shrink-0 active:scale-95 transition ${
-                chosenDay === tomorrowISO
-                  ? 'bg-idayal-blue text-white shadow-[0_4px_14px_rgba(59,125,216,0.40)]'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-idayal-text dark:text-zinc-200'
-              }`}
-            >
-              Demain
-            </button>
-
             {effectiveScheduled && (
               <button
                 type="button"
-                onClick={act(clearDate)}
+                className="clear-date"
                 aria-label="Retirer la date"
-                className="w-9 h-9 rounded-full bg-idayal-blue/90 text-white flex items-center justify-center flex-shrink-0 active:scale-90 transition-all shadow-soft"
+                onClick={act(clearDate)}
               >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                  <path d="M6 6l12 12M18 6L6 18" />
-                </svg>
+                ×
               </button>
             )}
           </div>
 
           {/* Heures fixes. */}
-          <div className={groupShell}>
+          <div className={`time-shortcut-row ${groupShell}`}>
             {FIXED_TIMES.map(([h, m]) => {
               const label = `${pad2(h)}:${pad2(m)}`;
               return (
@@ -372,26 +404,33 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
           </div>
 
           {/* Décalages, à partir de l'heure retenue. */}
-          <div className={groupShell}>
+          <div className={`shift-shortcut-row ${groupShell}`}>
             {SHIFTS.map((s) => (
-              <GroupButton key={s.label} onClick={act(() => applyShift(s.hours))}>
+              <GroupButton
+                key={s.label}
+                onClick={act(() => applyShift(s.hours))}
+              >
                 {s.label}
               </GroupButton>
             ))}
             {/* Même principe pour l'heure libre : le champ recouvre le bouton. */}
             <div className="relative flex flex-col items-center justify-center px-3 h-11 rounded-full text-idayal-text dark:text-zinc-200 active:scale-95 transition-transform">
-              <span className="tabular text-[15px] font-medium leading-none">•••</span>
+              <span className="tabular text-[15px] font-medium leading-none">
+                •••
+              </span>
               <input
                 type="time"
                 aria-label="Choisir l'heure"
-                value={chosenTime ?? ''}
+                value={chosenTime ?? ""}
                 onClick={openNativePicker}
                 onFocus={holdOpen}
                 onBlur={releaseSoon}
                 onChange={(e) => {
                   hold();
                   const day = chosenDay ?? toLocalISODate(new Date());
-                  setManualDate(e.target.value ? `${day}T${e.target.value}` : day);
+                  setManualDate(
+                    e.target.value ? `${day}T${e.target.value}` : day,
+                  );
                 }}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer appearance-none bg-transparent border-0 p-0"
               />
@@ -400,15 +439,34 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
         </div>
       )}
 
+      {effectiveScheduled && (
+        <div className="capture-preview" role="status">
+          <CalendarIcon />
+          <span>
+            {dayPillLabel(effectiveScheduled)}
+            {recurringPreview.recurrence && (
+              <small className="capture-recurrence">
+                {recurrenceLabel({
+                  ...recurringPreview.recurrence,
+                  anchorDate: effectiveScheduled,
+                })}
+              </small>
+            )}
+          </span>
+          <span className="preview-origin">
+            {manualDate ? "Date choisie" : "Compris dans ta phrase"}
+          </span>
+        </div>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
-        className={`flex items-center gap-1.5 bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev rounded-[28px] pl-5 pr-2 py-2 transition-all duration-200 ${
+        className={`capture-form flex items-center gap-1.5 bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev rounded-[28px] pl-5 pr-2 py-2 transition-all duration-200 ${
           focused
-            ? 'ring-2 ring-idayal-blue/45 shadow-[0_10px_32px_-6px_rgba(59,125,216,0.40),0_2px_8px_rgba(15,16,32,0.10)]'
-            : 'ring-1 ring-idayal-blue/15 shadow-[0_8px_28px_-6px_rgba(15,16,32,0.22),0_2px_6px_rgba(15,16,32,0.08)]'
+            ? "ring-2 ring-idayal-blue/45 shadow-[0_10px_32px_-6px_rgba(59,125,216,0.40),0_2px_8px_rgba(15,16,32,0.10)]"
+            : "ring-1 ring-idayal-blue/15 shadow-[0_8px_28px_-6px_rgba(15,16,32,0.22),0_2px_6px_rgba(15,16,32,0.08)]"
         }`}
       >
         <input
@@ -420,7 +478,10 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
             hold();
             setFocused(true);
             window.setTimeout(() => {
-              inputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              inputRef.current?.scrollIntoView({
+                block: "center",
+                behavior: "smooth",
+              });
             }, 200);
           }}
           /* Fenêtre volontaire : le temps qu'un tap sur un raccourci aboutisse. */
@@ -428,6 +489,7 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
             hold();
             blurTimer.current = window.setTimeout(() => setFocused(false), 250);
           }}
+          aria-label="Noter une tâche"
           placeholder="Noter une tâche…"
           /* 16px minimum : en dessous, Safari iOS zoome la page à la mise au point. */
           className="flex-1 min-w-0 h-11 bg-transparent outline-none text-[16px] placeholder:text-idayal-text-muted text-idayal-text dark:text-zinc-100"
@@ -441,11 +503,28 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
           disabled={!value.trim()}
           className="w-11 h-11 rounded-full bg-idayal-blue text-white flex items-center justify-center flex-shrink-0 disabled:opacity-30 disabled:bg-idayal-text-muted active:scale-90 transition-all shadow-[0_4px_14px_rgba(59,125,216,0.45)] disabled:shadow-none"
         >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+          <svg
+            viewBox="0 0 24 24"
+            width="22"
+            height="22"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+          >
             <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
       </form>
+      <div className="capture-caption">
+        <span>
+          Écris comme tu penses.{" "}
+          <span className="capture-example">
+            « appeler Marie demain à 10h »
+          </span>
+        </span>
+        <kbd className="kbd-hint">N</kbd>
+      </div>
     </div>
   );
 }

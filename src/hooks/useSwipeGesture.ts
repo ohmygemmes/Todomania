@@ -1,98 +1,157 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface SwipeState {
   dx: number;
   dy: number;
   active: boolean;
 }
-
 interface Options {
-  /** Seuil en pixels au-delà duquel on déclenche right/left. Si non fourni, calculé à 40% de la largeur de fenêtre. */
   threshold?: number;
-  /** Désactiver les listeners (par ex. carte derrière la pile). */
   enabled?: boolean;
   onSwipeRight?: () => void;
   onSwipeLeft?: () => void;
 }
+const IDLE: SwipeState = { dx: 0, dy: 0, active: false };
+const INTERACTIVE =
+  'button, input, textarea, select, a, [contenteditable="true"], [data-swipe-ignore]';
 
-/**
- * Hook de drag horizontal en touch events natifs.
- * Renvoie une ref à attacher à l'élément + l'état du drag.
- */
+/** One pointer path for finger, pen and mouse, with horizontal intent detection. */
 export function useSwipeGesture<T extends HTMLElement>(opts: Options) {
-  const { threshold, onSwipeRight, onSwipeLeft, enabled = true } = opts;
+  const { enabled = true } = opts;
   const ref = useRef<T | null>(null);
-  const [state, setState] = useState<SwipeState>({ dx: 0, dy: 0, active: false });
-
-  // On garde les callbacks dans une ref pour éviter de re-binder les listeners.
-  const cbRef = useRef({ onSwipeRight, onSwipeLeft, threshold });
-  cbRef.current = { onSwipeRight, onSwipeLeft, threshold };
-
-  const startRef = useRef<{ x: number; y: number } | null>(null);
-  const draggingRef = useRef(false);
-  const lastRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
-
+  const [state, setState] = useState<SwipeState>(IDLE);
+  const callbacks = useRef(opts);
+  callbacks.current = opts;
+  const gesture = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    dx: number;
+    dy: number;
+    horizontal: boolean;
+  } | null>(null);
+  const ignoreClickUntil = useRef(0);
+  const stopPointerTracking = useRef<(() => void) | null>(null);
   const reset = useCallback(() => {
-    setState({ dx: 0, dy: 0, active: false });
-    startRef.current = null;
-    draggingRef.current = false;
-    lastRef.current = { dx: 0, dy: 0 };
+    stopPointerTracking.current?.();
+    stopPointerTracking.current = null;
+    const pointerId = gesture.current?.id;
+    gesture.current = null;
+    const el = ref.current;
+    if (pointerId !== undefined && el?.hasPointerCapture(pointerId))
+      el.releasePointerCapture(pointerId);
+    setState(IDLE);
   }, []);
 
   useEffect(() => {
     const el = ref.current;
     if (!el || !enabled) return;
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const t = e.touches[0];
-      startRef.current = { x: t.clientX, y: t.clientY };
-      draggingRef.current = true;
-      lastRef.current = { dx: 0, dy: 0 };
-      setState({ dx: 0, dy: 0, active: true });
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (!draggingRef.current || !startRef.current) return;
-      const t = e.touches[0];
-      const dx = t.clientX - startRef.current.x;
-      const dy = t.clientY - startRef.current.y;
-      // Si le geste est principalement vertical au début, on laisse passer le scroll.
-      if (Math.abs(dx) < 8 && Math.abs(dy) > 12) {
-        draggingRef.current = false;
+    const down = (event: PointerEvent) => {
+      if (!event.isPrimary) {
         reset();
         return;
       }
-      if (e.cancelable) e.preventDefault();
-      lastRef.current = { dx, dy };
+      const interactive = (event.target as Element).closest(INTERACTIVE);
+      const title = interactive?.matches("[data-swipe-title]");
+      if (event.button !== 0 || (interactive && !title)) return;
+      if (event.pointerType === "mouse") {
+        // A simple title click must keep its native target and focus behavior.
+        if (!title) event.preventDefault();
+        const focused = document.activeElement;
+        if (
+          focused instanceof HTMLElement &&
+          focused.matches('input, textarea, [contenteditable="true"]')
+        )
+          focused.blur();
+      }
+      gesture.current = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        dx: 0,
+        dy: 0,
+        horizontal: false,
+      };
+      // Only the row/card under the pointer listens to global movement.
+      // A long list must not run one global move handler per task.
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", up);
+      stopPointerTracking.current = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+    };
+    const move = (event: PointerEvent) => {
+      const current = gesture.current;
+      if (!current || current.id !== event.pointerId) return;
+      const dx = event.clientX - current.x;
+      const dy = event.clientY - current.y;
+      if (!current.horizontal) {
+        if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+          reset();
+          return;
+        }
+        if (Math.abs(dx) < 8) return;
+        current.horizontal = true;
+        // Capturing at pointerdown retargeted title clicks to the row/card,
+        // preventing inline editing. Capture only once a drag is intentional.
+        el.setPointerCapture(event.pointerId);
+      }
+      if (event.cancelable) event.preventDefault();
+      current.dx = dx;
+      current.dy = dy;
       setState({ dx, dy, active: true });
     };
-
-    const onTouchEnd = () => {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      const limit = cbRef.current.threshold ?? Math.min(window.innerWidth * 0.4, 180);
-      const { dx } = lastRef.current;
-      if (dx > limit) cbRef.current.onSwipeRight?.();
-      else if (dx < -limit) cbRef.current.onSwipeLeft?.();
-      setState({ dx: 0, dy: 0, active: false });
-      startRef.current = null;
-      lastRef.current = { dx: 0, dy: 0 };
+    const up = (event: PointerEvent) => {
+      const current = gesture.current;
+      if (!current || current.id !== event.pointerId) return;
+      const limit =
+        callbacks.current.threshold ?? Math.min(el.clientWidth * 0.28, 112);
+      const action =
+        current.horizontal && current.dx > limit
+          ? callbacks.current.onSwipeRight
+          : current.horizontal && current.dx < -limit
+            ? callbacks.current.onSwipeLeft
+            : undefined;
+      if (current.horizontal)
+        ignoreClickUntil.current = performance.now() + 350;
+      reset();
+      action?.();
     };
-
-    const onTouchCancel = () => reset();
-
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd);
-    el.addEventListener('touchcancel', onTouchCancel);
+    const click = (event: MouseEvent) => {
+      if (performance.now() < ignoreClickUntil.current) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+    const lost = (event: PointerEvent) => {
+      // Touch starts with implicit capture on the title's child element. Its
+      // lostpointercapture bubbles while capture transfers to the card: that
+      // transfer is not a cancelled swipe.
+      if (
+        gesture.current?.id === event.pointerId &&
+        (event.type === "pointercancel" || event.target === el)
+      )
+        reset();
+    };
+    const visibility = () => {
+      if (document.hidden) reset();
+    };
+    el.addEventListener("pointerdown", down);
+    el.addEventListener("pointercancel", lost);
+    el.addEventListener("lostpointercapture", lost);
+    el.addEventListener("click", click, true);
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", visibility);
     return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('touchcancel', onTouchCancel);
+      el.removeEventListener("pointerdown", down);
+      el.removeEventListener("pointercancel", lost);
+      el.removeEventListener("lostpointercapture", lost);
+      el.removeEventListener("click", click, true);
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", visibility);
+      reset();
     };
-  }, [reset, enabled]);
-
+  }, [enabled, reset]);
   return { ref, state, reset };
 }

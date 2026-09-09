@@ -23,9 +23,10 @@ function t(
   expectedTitle: string,
   expected: null | [number, number, number, number, number],
   /** Une heure a-t-elle été écrite ? Par défaut, déduit de l'attendu. */
-  expectedHasTime?: boolean
+  expectedHasTime?: boolean,
+  now: Date = NOW
 ) {
-  const r = parseFrenchDate(input, NOW);
+  const r = parseFrenchDate(input, now);
   const d = r.detectedDate;
   let ok = r.cleanTitle === expectedTitle;
   const wantHasTime =
@@ -175,6 +176,83 @@ t('course demain a 12h', 'course', [5, 8, 2026, 12, 0]);
 console.log('\n--- Le « a » nu ne doit pas inventer une heure ---');
 t('acheter a 3 euros', 'acheter a 3 euros', null);
 t('donner a manger au chat', 'donner a manger au chat', null);
+
+console.log('\n--- Durées à partir de maintenant, chiffres et français naturel ---');
+t('rappeler dans 20 minutes', 'rappeler', [4, 8, 2026, 10, 20]);
+t('rappeler dans deux heures', 'rappeler', [4, 8, 2026, 12, 0]);
+t('rappeler dans une heure', 'rappeler', [4, 8, 2026, 11, 0]);
+t('DANS VINGT MINUTES appeler Léa', 'appeler Léa', [4, 8, 2026, 10, 20]);
+t('appeler dans vingt et une minutes', 'appeler', [4, 8, 2026, 10, 21]);
+t('appeler dans vingt-deux minutes', 'appeler', [4, 8, 2026, 10, 22]);
+t('appeler dans dix-sept minutes', 'appeler', [4, 8, 2026, 10, 17]);
+t('appeler dans soixante et onze minutes', 'appeler', [4, 8, 2026, 11, 11]);
+t('appeler dans quatre-vingts minutes', 'appeler', [4, 8, 2026, 11, 20]);
+t('appeler dans quatre-vingt-dix-neuf minutes', 'appeler', [4, 8, 2026, 11, 39]);
+t('rappeler dans 90 min', 'rappeler', [4, 8, 2026, 11, 30]);
+t('rappeler dans 2h', 'rappeler', [4, 8, 2026, 12, 0]);
+t('rappeler dans 2h30', 'rappeler', [4, 8, 2026, 12, 30]);
+t('rappeler dans 2 heures 30 minutes', 'rappeler', [4, 8, 2026, 12, 30]);
+t('rappeler dans deux heures et vingt minutes', 'rappeler', [4, 8, 2026, 12, 20]);
+t('rappeler dans une heure et demie', 'rappeler', [4, 8, 2026, 11, 30]);
+t('rappeler dans une demi-heure', 'rappeler', [4, 8, 2026, 10, 30]);
+t("rappeler dans un quart d'heure", 'rappeler', [4, 8, 2026, 10, 15]);
+t('rappeler dans trois quarts d’heure', 'rappeler', [4, 8, 2026, 10, 45]);
+t('rappeler dans une heure et quart', 'rappeler', [4, 8, 2026, 11, 15]);
+
+console.log('\n--- Moments de journée et heure exacte prioritaire ---');
+t('rappeler demain matin', 'rappeler', [5, 8, 2026, 9, 0]);
+t('rappeler demain après-midi', 'rappeler', [5, 8, 2026, 14, 0]);
+t('rappeler demain apres midi', 'rappeler', [5, 8, 2026, 14, 0]);
+t('rappeler demain soir', 'rappeler', [5, 8, 2026, 18, 0]);
+t('rappeler après-demain matin', 'rappeler', [6, 8, 2026, 9, 0]);
+t('rappeler ce soir', 'rappeler', [4, 8, 2026, 18, 0]);
+t('rappeler cet après-midi', 'rappeler', [4, 8, 2026, 14, 0]);
+t('rappeler ce matin', 'rappeler', [5, 8, 2026, 9, 0]);
+t('rappeler demain matin à 10h30', 'rappeler', [5, 8, 2026, 10, 30]);
+t('rappeler ce soir a 20h', 'rappeler', [4, 8, 2026, 20, 0]);
+t('rappeler demain matin 0h', 'rappeler', [5, 8, 2026, 0, 0], true);
+t("rappeler aujourd'hui dans l'après-midi", 'rappeler', [4, 8, 2026, 14, 0]);
+t('rappeler aujourd’hui dans l’après-midi', 'rappeler', [4, 8, 2026, 14, 0]);
+t('rappeler demain en soirée', 'rappeler', [5, 8, 2026, 18, 0]);
+
+console.log('\n--- À 23h55, passages à demain et changement de mois/année ---');
+const LATE = new Date(2026, 8, 9, 23, 55, 0);
+t('rappeler dans 20 minutes', 'rappeler', [10, 9, 2026, 0, 15], true, LATE);
+t('rappeler dans cinq minutes', 'rappeler', [10, 9, 2026, 0, 0], true, LATE);
+t('rappeler dans deux heures', 'rappeler', [10, 9, 2026, 1, 55], true, LATE);
+t('rappeler ce soir', 'rappeler', [10, 9, 2026, 18, 0], true, LATE);
+t('rappeler cet après-midi', 'rappeler', [10, 9, 2026, 14, 0], true, LATE);
+t('rappeler demain matin', 'rappeler', [10, 9, 2026, 9, 0], true, LATE);
+t('rappeler 10h', 'rappeler', [5, 8, 2026, 10, 0]); // exacte égalité : prochaine occurrence
+t('rappeler ce soir', 'rappeler', [10, 9, 2026, 18, 0], true, new Date(2026, 8, 9, 18, 0));
+t('rappeler demain matin', 'rappeler', [1, 1, 2027, 9, 0], true, new Date(2026, 11, 31, 23, 55));
+t('rappeler dans 20 minutes', 'rappeler', [1, 1, 2027, 0, 15], true, new Date(2026, 11, 31, 23, 55));
+
+console.log('\n--- Expressions invalides : titre préservé, aucun horaire inventé ---');
+for (const input of [
+  'rappeler dans zéro minutes',
+  'rappeler dans 0 heures',
+  'rappeler dans -2h',
+  'rappeler dans 1,5h',
+  'rappeler dans 1.5 heures',
+  'rappeler dans 999999999999999999 heures',
+  'rappeler dans deux et trois minutes',
+  'rappeler dans vingt-douze minutes',
+  'rappeler dans 2h75',
+  'rappeler dans 2 heures 90 minutes',
+  'rappeler demain matin à 25h',
+  'rappeler demain matin à 9h90',
+  'rappeler demain matin à 9h5',
+  'rappeler ce soir à 250h',
+  'rappeler ce soir à 18h600',
+  'rappeler à 14h5',
+  'rappeler 250h',
+  'rappeler dans deux',
+  'acheter vingt pommes',
+  'rappeler dans 20 minutesmaximum',
+]) t(input, input, null);
+t('acheter demain matin 2 pommes', 'acheter 2 pommes', [5, 8, 2026, 9, 0]);
+t('acheter ce soir 20 euros de pain', 'acheter 20 euros de pain', [4, 8, 2026, 18, 0]);
 
 console.log(`\n${pass} réussis, ${fail} échoués\n`);
 if (fail > 0) throw new Error(`${fail} test(s) du parseur en échec`);

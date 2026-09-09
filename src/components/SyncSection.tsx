@@ -93,7 +93,7 @@ export function SyncSection({ sync }: Props) {
                   ? 'bg-idayal-orange'
                   : sync.status === 'syncing'
                     ? 'bg-idayal-blue animate-shimmer'
-                    : 'bg-idayal-green'
+                    : 'bg-idayal-blue'
               }`}
             />
           </div>

@@ -1,22 +1,34 @@
-import { Wordmark } from './Wordmark';
-
-export function BrandHeader() {
+import { Wordmark } from "./Wordmark";
+import { Icon } from "./Icon";
+export function BrandHeader({
+  onOpenSettings,
+  onSearch,
+}: {
+  onOpenSettings: () => void;
+  onSearch: () => void;
+}) {
   return (
-    /*
-      Le nom passe en mention.
-      C'est la date qui est devenue le titre de l'écran : deux titres se
-      disputaient le haut de page, et celui qui n'apprend rien — on sait quelle
-      application on a ouverte — prend désormais un tiers de la hauteur qu'il avait.
-    */
-    <header
-      className="flex items-baseline gap-2 px-5 pt-3 pb-1"
-      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 10px)' }}
-    >
-      {/* Le nom est en `currentColor` : le mode sombre l'inverse tout seul. */}
-      <Wordmark height={19} className="text-[#16255B] dark:text-white" />
-      <span className="text-[10.5px] text-idayal-text-muted dark:text-zinc-500 italic">
-        ma journée idéale
-      </span>
+    <header className="brand-header">
+      <div className="brand-lockup">
+        <Wordmark height={32} className="text-[#16255B] dark:text-white" />
+        <span>ma journée idéale</span>
+      </div>
+      <div className="header-tools">
+        <button
+          className="icon-button search-trigger"
+          aria-label="Rechercher des tâches et des notes"
+          onClick={onSearch}
+        >
+          <Icon name="search" />
+        </button>
+        <button
+          className="icon-button mobile-settings"
+          aria-label="Réglages"
+          onClick={onOpenSettings}
+        >
+          <Icon name="settings" />
+        </button>
+      </div>
     </header>
   );
 }

@@ -1,12 +1,13 @@
-import { toLocalISODate } from '../services/localDate';
-import { useEffect, useRef, useState } from 'react';
+import { useDialogFocus } from "../hooks/useDialogFocus";
+import { toLocalISODate } from "../services/localDate";
+import { useEffect, useRef, useState } from "react";
 import {
   isNotificationSupported,
   requestNotificationPermission,
-} from '../services/notificationService';
-import type { Settings } from '../types/task';
-import { SyncSection } from './SyncSection';
-import type { CloudSync } from '../hooks/useCloudSync';
+} from "../services/notificationService";
+import type { Settings } from "../types/task";
+import { SyncSection } from "./SyncSection";
+import type { CloudSync } from "../hooks/useCloudSync";
 
 interface Props {
   open: boolean;
@@ -31,6 +32,7 @@ export function SettingsModal({
   appVersion,
   sync,
 }: Props) {
+  const dialogRef = useDialogFocus(open, onClose);
   const [feedback, setFeedback] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -43,11 +45,11 @@ export function SettingsModal({
   const toggleNotifications = async () => {
     if (!settings.notificationsEnabled) {
       const perm = await requestNotificationPermission();
-      if (perm === 'granted') {
+      if (perm === "granted") {
         onUpdateSettings({ notificationsEnabled: true });
-        setFeedback('Notifications activées.');
+        setFeedback("Notifications activées.");
       } else {
-        setFeedback('Permission refusée.');
+        setFeedback("Permission refusée.");
       }
     } else {
       onUpdateSettings({ notificationsEnabled: false });
@@ -55,16 +57,21 @@ export function SettingsModal({
   };
 
   const handleClean = () => {
-    if (!window.confirm('Supprimer les tâches complétées de plus de 30 jours ?')) return;
+    if (
+      !window.confirm("Supprimer les tâches complétées de plus de 30 jours ?")
+    )
+      return;
     const removed = onCleanCompleted();
-    setFeedback(`${removed} tâche${removed !== 1 ? 's' : ''} supprimée${removed !== 1 ? 's' : ''}.`);
+    setFeedback(
+      `${removed} tâche${removed !== 1 ? "s" : ""} supprimée${removed !== 1 ? "s" : ""}.`,
+    );
   };
 
   const handleExport = () => {
     const json = onExport();
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = `idayal-${toLocalISODate(new Date())}.json`;
     document.body.appendChild(a);
@@ -80,30 +87,39 @@ export function SettingsModal({
     if (!file) return;
     const text = await file.text();
     const ok = onImport(text);
-    setFeedback(ok ? 'Import réussi.' : "Échec de l'import (JSON invalide).");
-    e.target.value = '';
+    setFeedback(ok ? "Import réussi." : "Échec de l'import (JSON invalide).");
+    e.target.value = "";
   };
 
-  const setTheme = (mode: Settings['themeMode']) => {
+  const setTheme = (mode: Settings["themeMode"]) => {
     onUpdateSettings({ themeMode: mode });
   };
 
+  if (!open) return null;
+
   return (
     <div
-      className={`fixed inset-0 z-50 ${open ? 'pointer-events-auto' : 'pointer-events-none'}`}
-      aria-hidden={!open}
+      className={`fixed inset-0 z-50 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Réglages"
+      ref={dialogRef}
+      tabIndex={-1}
     >
       <div
         className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 ${
-          open ? 'opacity-100' : 'opacity-0'
+          open ? "opacity-100" : "opacity-0"
         }`}
         onClick={onClose}
       />
       <div
-        className={`absolute left-1/2 -translate-x-1/2 bottom-0 w-full max-w-app bg-idayal-bg dark:bg-idayal-bg-dark rounded-t-[28px] shadow-2xl transition-transform duration-300 ease-out ${
-          open ? 'translate-y-0' : 'translate-y-full'
+        className={`settings-sheet absolute left-1/2 -translate-x-1/2 bottom-0 w-full max-w-app bg-idayal-bg dark:bg-idayal-bg-dark rounded-t-[28px] shadow-2xl transition-transform duration-300 ease-out ${
+          open ? "translate-y-0" : "translate-y-full"
         }`}
-        style={{ maxHeight: '90vh', paddingBottom: 'env(safe-area-inset-bottom)' }}
+        style={{
+          maxHeight: "90vh",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
       >
         {/* Handle visuel en haut */}
         <div className="flex justify-center pt-2.5 pb-1">
@@ -119,20 +135,33 @@ export function SettingsModal({
             aria-label="Fermer"
             className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 text-idayal-text-secondary dark:text-zinc-300 flex items-center justify-center active:scale-90 transition"
           >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+            >
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
           </button>
         </div>
 
-        <div className="overflow-y-auto px-5 pb-6" style={{ maxHeight: 'calc(90vh - 60px)' }}>
+        <div
+          className="overflow-y-auto px-5 pb-6"
+          style={{ maxHeight: "calc(90vh - 60px)" }}
+        >
           <SyncSection sync={sync} />
 
           {/* Notifications */}
           <section className="mb-5">
             <div className="flex items-center justify-between bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev border border-idayal-border dark:border-idayal-border-dark rounded-row px-4 py-3 shadow-sm">
               <div>
-                <p className="text-idayal-text dark:text-zinc-100 font-medium">Notifications</p>
+                <p className="text-idayal-text dark:text-zinc-100 font-medium">
+                  Notifications
+                </p>
                 <p className="text-xs text-idayal-text-secondary dark:text-zinc-400 mt-0.5">
                   Résumé matin + alertes horaires.
                 </p>
@@ -141,13 +170,16 @@ export function SettingsModal({
                 type="button"
                 onClick={toggleNotifications}
                 className={`relative w-12 h-7 rounded-full transition-colors ${
-                  settings.notificationsEnabled ? 'bg-idayal-green' : 'bg-zinc-300 dark:bg-zinc-700'
+                  settings.notificationsEnabled
+                    ? "bg-idayal-blue"
+                    : "bg-zinc-300 dark:bg-zinc-700"
                 }`}
+                aria-label="Activer les notifications"
                 aria-pressed={settings.notificationsEnabled}
               >
                 <span
                   className={`absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white transition-transform ${
-                    settings.notificationsEnabled ? 'translate-x-5' : ''
+                    settings.notificationsEnabled ? "translate-x-5" : ""
                   }`}
                 />
               </button>
@@ -158,19 +190,23 @@ export function SettingsModal({
               </p>
             )}
             <p className="text-xs text-idayal-text-secondary dark:text-zinc-500 mt-2 px-1 leading-relaxed">
-              Sur iPhone, les notifications fonctionnent uniquement si l'app est installée via
-              « Ajouter à l'écran d'accueil » dans Safari.
+              Sur iPhone, les notifications fonctionnent uniquement si l'app est
+              installée via « Ajouter à l'écran d'accueil » dans Safari.
             </p>
           </section>
 
           {/* Heure du résumé */}
           <section className="mb-5">
             <div className="flex items-center justify-between bg-idayal-bg-elev dark:bg-idayal-bg-dark-elev border border-idayal-border dark:border-idayal-border-dark rounded-row px-4 py-3 shadow-sm">
-              <p className="text-idayal-text dark:text-zinc-100 font-medium">Résumé du matin</p>
+              <p className="text-idayal-text dark:text-zinc-100 font-medium">
+                Résumé du matin
+              </p>
               <input
                 type="time"
                 value={settings.morningSummaryTime}
-                onChange={(e) => onUpdateSettings({ morningSummaryTime: e.target.value })}
+                onChange={(e) =>
+                  onUpdateSettings({ morningSummaryTime: e.target.value })
+                }
                 className="bg-transparent text-idayal-blue font-medium outline-none"
               />
             </div>
@@ -182,18 +218,18 @@ export function SettingsModal({
               Apparence
             </p>
             <div className="flex gap-2">
-              {(['system', 'light', 'dark'] as const).map((m) => (
+              {(["system", "light", "dark"] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
                   onClick={() => setTheme(m)}
                   className={`flex-1 py-2 rounded-row text-sm font-medium transition ${
                     settings.themeMode === m
-                      ? 'bg-idayal-blue text-white'
-                      : 'bg-white dark:bg-zinc-900 text-idayal-text dark:text-zinc-200'
+                      ? "bg-idayal-blue text-white"
+                      : "bg-white dark:bg-zinc-900 text-idayal-text dark:text-zinc-200"
                   }`}
                 >
-                  {m === 'system' ? 'Auto' : m === 'light' ? 'Clair' : 'Sombre'}
+                  {m === "system" ? "Auto" : m === "light" ? "Clair" : "Sombre"}
                 </button>
               ))}
             </div>
@@ -235,7 +271,9 @@ export function SettingsModal({
           </section>
 
           {feedback && (
-            <p className="text-center text-sm text-idayal-green mb-3">{feedback}</p>
+            <p className="text-center text-sm text-idayal-blue mb-3">
+              {feedback}
+            </p>
           )}
 
           <p className="text-center text-xs text-idayal-text-secondary dark:text-zinc-500 mt-4">

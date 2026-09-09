@@ -292,7 +292,9 @@ export function QuickAddBar({ onAdd, inputRef: externalRef }: Props) {
     setValue("");
     setManualDate("");
     setIgnoredDetected(null);
-    inputRef.current?.focus();
+    inputRef.current?.blur();
+    hold();
+    setFocused(false);
   };
 
   const showShortcuts = focused;

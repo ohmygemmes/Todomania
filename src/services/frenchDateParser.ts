@@ -48,6 +48,45 @@ const WEEKDAYS: Record<string, number> = {
 const MONTH_PATTERN =
   '(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)';
 const WEEKDAY_PATTERN = '(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)';
+const DAY_PART_PATTERN = '(matin|apr[eè]s[-\\s]?midi|soir(?:[eé]e)?)';
+
+const SMALL_NUMBERS: Record<string, number> = {
+  zero: 0, un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5,
+  six: 6, sept: 7, huit: 8, neuf: 9, dix: 10, onze: 11, douze: 12,
+  treize: 13, quatorze: 14, quinze: 15, seize: 16,
+};
+const TENS: Record<string, number> = {
+  vingt: 20, trente: 30, quarante: 40, cinquante: 50, soixante: 60,
+};
+const NUMBER_WORD = '(?:z[eé]ro|une?|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|onze|douze|treize|quatorze|quinze|seize|vingts?|trente|quarante|cinquante|soixante)';
+const NUMBER_PATTERN = `(?:\\d+|${NUMBER_WORD}(?:[-\\s]+(?:${NUMBER_WORD}|et))*)`;
+
+/** Petits nombres usuels, sans interpréter les nombres qui n'ont pas d'unité. */
+function readNumber(text: string): number | null {
+  if (/^\d+$/.test(text)) {
+    const value = Number(text);
+    return Number.isSafeInteger(value) ? value : null;
+  }
+  const words = text.replace(/é/g, 'e').replace(/vingts\b/g, 'vingt').replace(/-/g, ' ').trim().split(/\s+/);
+  const small = SMALL_NUMBERS[words.join(' ')];
+  if (small !== undefined) return small;
+  if (words[0] === 'dix' && words.length === 2 && ['sept', 'huit', 'neuf'].includes(words[1])) {
+    return 10 + SMALL_NUMBERS[words[1]];
+  }
+  const eighty = words[0] === 'quatre' && words[1] === 'vingt';
+  const base = eighty ? 80 : TENS[words[0]];
+  if (base === undefined) return null;
+  const rest = words.slice(eighty ? 2 : 1);
+  if (rest.length === 0) return base;
+  if (rest[0] === 'et') {
+    // « vingt et un », « soixante et onze » ; jamais « deux et trois ».
+    if (eighty || rest.length !== 2 || (rest[1] !== 'un' && rest[1] !== 'une' && !(base === 60 && rest[1] === 'onze'))) return null;
+    return base + SMALL_NUMBERS[rest[1]];
+  }
+  const tail = readNumber(rest.join(' '));
+  const maxTail = base === 60 || base === 80 ? 19 : 9;
+  return tail !== null && tail > 0 && tail <= maxTail ? base + tail : null;
+}
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -82,7 +121,7 @@ function strip(text: string, match: { index: number; length: number }): string {
 interface Match {
   index: number;
   length: number;
-  date: Date;
+  date: Date | null;
   hasTime: boolean;
 }
 
@@ -114,7 +153,11 @@ function findMatch(
   const m = regex.exec(lowered);
   if (!m) return null;
   const built = builder(m, now);
-  if (!built || !isUsableDate(built.date)) return null;
+  // Une expression reconnue mais invalide ne doit pas être réinterprétée
+  // ensuite comme une heure seule ou comme le seul mot « demain ».
+  if (!built || !isUsableDate(built.date)) {
+    return { index: m.index, length: m[0].length, date: null, hasTime: false };
+  }
   return { index: m.index, length: m[0].length, date: built.date, hasTime: built.hasTime };
 }
 
@@ -135,13 +178,13 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
    * Le « à » reste facultatif et accepté sans accent : personne ne tape les
    * accents au clavier d'un téléphone.
    */
-  const TIME = '(?:\\s+(?:[aà]\\s+)?(\\d{1,2})[h:](\\d{2})?)?';
+  const TIME = '(?:\\s+(?:[aà]\\s+)?(\\d+)[h:](\\d*)?)?';
 
   function buildTime(base: Date, hStr?: string, mStr?: string): Built | null {
     if (!hStr) return { date: base, hasTime: false };
     const hour = parseInt(hStr, 10);
     const minute = mStr ? parseInt(mStr, 10) : 0;
-    if (hour > 23 || minute > 59) return null;
+    if (hStr.length > 2 || (mStr && mStr.length !== 2) || hour > 23 || minute > 59) return null;
     return { date: applyTime(base, hour, minute), hasTime: true };
   }
 
@@ -159,8 +202,30 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
   function buildTimeToday(n: Date, hStr?: string, mStr?: string): Built | null {
     const built = buildTime(startOfDay(n), hStr, mStr);
     if (!built) return null;
-    if (built.date.getTime() < n.getTime()) built.date.setDate(built.date.getDate() + 1);
+    if (built.date.getTime() <= n.getTime()) built.date.setDate(built.date.getDate() + 1);
     return built;
+  }
+
+  function buildDayPart(
+    n: Date,
+    part: string,
+    dayOffset: number | undefined,
+    hStr?: string,
+    mStr?: string
+  ): Built | null {
+    const base = startOfDay(n);
+    base.setDate(base.getDate() + (dayOffset ?? 0));
+    const defaultHour = part === 'matin' ? 9 : part.startsWith('soir') ? 18 : 14;
+    const built = buildTime(base, hStr ?? String(defaultHour), mStr);
+    if (built && dayOffset === undefined && built.date.getTime() <= n.getTime()) {
+      built.date.setDate(built.date.getDate() + 1);
+    }
+    return built;
+  }
+
+  function inMinutes(n: Date, minutes: number): Built | null {
+    if (!Number.isSafeInteger(minutes) || minutes <= 0) return null;
+    return { date: new Date(n.getTime() + minutes * 60_000), hasTime: true };
   }
 
   /**
@@ -204,6 +269,58 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
     regex: RegExp;
     build: (m: RegExpExecArray, now: Date) => Built | null;
   }> = [
+    // Durées : elles doivent passer avant l'heure seule (« dans 2h »).
+    {
+      regex: /\bdans\s+(?:-\d+(?:[.,]\d+)?|\d+[.,]\d+)\s*(?:heures?|h|minutes?|min)\b/i,
+      build: () => null,
+    },
+    {
+      regex: /\bdans\s+(?:une?\s+)?demi[-\s]heure\b/i,
+      build: (_m, n) => inMinutes(n, 30),
+    },
+    {
+      regex: /\bdans\s+(un|trois)\s+quarts?\s+d['’]heure\b/i,
+      build: (m, n) => inMinutes(n, m[1] === 'trois' ? 45 : 15),
+    },
+    {
+      regex: new RegExp(`\\bdans\\s+(${NUMBER_PATTERN})\\s*h(\\d+)\\b`, 'i'),
+      build: (m, n) => {
+        const hours = readNumber(m[1]);
+        const minutes = Number(m[2]);
+        if (hours === null || m[2].length !== 2 || minutes > 59) return null;
+        return inMinutes(n, hours * 60 + minutes);
+      },
+    },
+    {
+      regex: new RegExp(`\\bdans\\s+(${NUMBER_PATTERN})\\s*(?:heures?|h)(?:\\s*(${NUMBER_PATTERN})\\s*(?:minutes?|min)\\b|\\s+et\\s+(${NUMBER_PATTERN})\\s*(?:minutes?|min)\\b|\\s+et\\s+(demie?|quart)\\b|\\b)`, 'i'),
+      build: (m, n) => {
+        const hours = readNumber(m[1]);
+        const extra = m[2] ?? m[3];
+        const minutes = extra ? readNumber(extra) : m[4] ? (m[4] === 'quart' ? 15 : 30) : 0;
+        if (hours === null || minutes === null || minutes > 59) return null;
+        return inMinutes(n, hours * 60 + minutes);
+      },
+    },
+    {
+      regex: new RegExp(`\\bdans\\s+(${NUMBER_PATTERN})\\s*(?:minutes?|min)\\b`, 'i'),
+      build: (m, n) => {
+        const minutes = readNumber(m[1]);
+        return minutes === null ? null : inMinutes(n, minutes);
+      },
+    },
+    // Les moments vagues donnent une vraie heure, visible avant validation.
+    // Une heure écrite ensuite prend toujours le pas sur l'heure proposée.
+    {
+      regex: new RegExp(`\\b(apr[eè]s[-\\s]?demain|demain|aujourd['’]hui)\\s+(?:(?:au|en)\\s+|(?:dans\\s+)?l['’])?${DAY_PART_PATTERN}${TIME}\\b`, 'i'),
+      build: (m, n) => {
+        const offset = m[1] === 'demain' ? 1 : m[1].startsWith('aujourd') ? 0 : 2;
+        return buildDayPart(n, m[2], offset, m[3], m[4]);
+      },
+    },
+    {
+      regex: new RegExp(`\\b(?:ce\\s+(matin|soir)|cet(?:te)?\\s+(apr[eè]s[-\\s]?midi))${TIME}\\b`, 'i'),
+      build: (m, n) => buildDayPart(n, m[1] ?? m[2], undefined, m[3], m[4]),
+    },
     // "[le] 15 avril [à] [12[h[30]]]" — le « le » est facultatif : on écrit
     // aussi bien « rdv 3 août » que « rdv le 3 août ».
     {
@@ -277,7 +394,7 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
     // dans « acheter a 3 euros » serait pris pour une heure.
     // Pas de \b avant « à » : ce n'est pas un caractère de mot.
     {
-      regex: /(?:^|\s)[aà]\s+(\d{1,2})[h:](\d{2})?/i,
+      regex: /(?:^|\s)[aà]\s+(\d+)[h:](\d*)\b/i,
       build: (m, n) => buildTimeToday(n, m[1], m[2]),
     },
     // "à 14" — heure nue tolérée uniquement avec le « à » accentué, qui est
@@ -288,7 +405,7 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
     },
     // "14h30" / "14h" / "14:30" — sans « à », le séparateur horaire est requis.
     {
-      regex: /\b(\d{1,2})[h:](\d{2})?\b/i,
+      regex: /\b(\d+)[h:](\d*)\b/i,
       build: (m, n) => buildTimeToday(n, m[1], m[2]),
     },
   ];
@@ -296,6 +413,7 @@ export function parseFrenchDate(input: string, now: Date = new Date()): ParsedDa
   for (const { regex, build } of builders) {
     const match = findMatch(lowered, regex, build, now);
     if (match) {
+      if (!match.date) return { cleanTitle: original.trim(), detectedDate: null, hasTime: false };
       return { cleanTitle: strip(original, match), detectedDate: match.date, hasTime: match.hasTime };
     }
   }

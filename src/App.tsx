@@ -283,6 +283,7 @@ export default function App() {
     const shownIsStarred = !!currentTop?.isPinned;
     setDeckFront(shownIsStarred ? null : id);
     setDeckBack((prev) => prev.filter((x) => x !== id));
+    setTab("cards");
   };
 
   /**

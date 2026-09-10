@@ -1,7 +1,7 @@
 /** Local, optional interaction sounds. Never driven by task-store updates. */
 const STORAGE_KEY = "idayal:sound-effects:v1";
 const CHANGE_EVENT = "idayal:sound-effects-changed";
-let enabledInMemory = false;
+let enabledInMemory = true;
 let storageAvailable = true;
 let context: AudioContext | null = null;
 let generation = 0;
@@ -13,7 +13,7 @@ export function soundEffectsEnabled(): boolean {
   if (!storageAvailable) return enabledInMemory;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved !== null) enabledInMemory = saved === "true";
+    enabledInMemory = saved === null || saved === "true";
   } catch {
     // The toggle still works for this session when storage is unavailable.
     storageAvailable = false;
@@ -39,7 +39,7 @@ export function setSoundEffectsEnabled(enabled: boolean) {
 export function subscribeSoundEffects(onChange: () => void) {
   const onStorage = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY && event.key !== null) return;
-    enabledInMemory = event.newValue === "true";
+    enabledInMemory = event.newValue === null || event.newValue === "true";
     if (!enabledInMemory) silence();
     onChange();
   };
